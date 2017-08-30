@@ -1,0 +1,10 @@
+LIBRARY
+EXPORTS
+	TS_StartServer @1
+	TS_StopServer @2
+	TS_SendData @3
+	TS_SetMessageCallback @4
+	TS_SetLogType @5
+	TS_GetPort @6
+	TS_CloseEndpoint @7
+	
