@@ -4,7 +4,7 @@
 #include <Windows.h>
 //#include <set>
 
-std::map<unsigned int, ts::tcp_server_t *> g_tsList;
+std::map<unsigned long long, ts::tcp_server_t *> g_tsList;
 std::mutex g_mutex4TsList;
 
 BOOL APIENTRY DllMain(void * hInst_, DWORD dwReason_, void * pReserved_)
@@ -14,7 +14,7 @@ BOOL APIENTRY DllMain(void * hInst_, DWORD dwReason_, void * pReserved_)
 	}
 	else if (dwReason_ == DLL_PROCESS_DETACH) {
 		if (!g_tsList.empty()) {
-			std::map<unsigned int, ts::tcp_server_t *>::iterator iter = g_tsList.begin();
+			std::map<unsigned long long, ts::tcp_server_t *>::iterator iter = g_tsList.begin();
 			while (iter != g_tsList.end()) {
 				ts::tcp_server_t * pTcpSrv = iter->second;
 				if (pTcpSrv) {
@@ -28,19 +28,19 @@ BOOL APIENTRY DllMain(void * hInst_, DWORD dwReason_, void * pReserved_)
 	return TRUE;
 }
 
-unsigned int __stdcall TS_StartServer(unsigned int uiPort_, int nLogType_, fMessageCallback fMsgCb_,
+unsigned long long __stdcall TS_StartServer(unsigned int uiPort_, int nLogType_, fMessageCallback fMsgCb_,
 	void * pUserData_, int nIdleTime_)
 {
-	unsigned int result = 0;
+	unsigned long long result = 0;
 	{
 		std::lock_guard<std::mutex> lock(g_mutex4TsList);
 		if (g_tsList.size() < MAX_PARALLEL_INSTANCE_NUM) {
 			ts::tcp_server_t * pTcpSrv = new ts::tcp_server_t();
 			if (pTcpSrv->Start((unsigned short)uiPort_, fMsgCb_, pUserData_) != -1) {
 				pTcpSrv->SetWaitDataTimeout(nIdleTime_);
-				unsigned int uiKey = (unsigned int)pTcpSrv;
-				g_tsList.emplace(uiKey, pTcpSrv);
-				result = uiKey;
+				unsigned long long ullKey = (unsigned long long)pTcpSrv;
+				g_tsList.emplace(ullKey, pTcpSrv);
+				result = ullKey;
 			}
 			else {
 				delete pTcpSrv;
@@ -51,13 +51,13 @@ unsigned int __stdcall TS_StartServer(unsigned int uiPort_, int nLogType_, fMess
 	return result;
 }
 
-int __stdcall TS_StopServer(unsigned int uiServerInst_)
+int __stdcall TS_StopServer(unsigned long long ulServerInst_)
 {
 	int result = -1;
-	if (uiServerInst_ > 0) {
+	if (ulServerInst_ > 0) {
 		std::lock_guard<std::mutex> lock(g_mutex4TsList);
 		if (!g_tsList.empty()) {
-			std::map<unsigned int, ts::tcp_server_t *>::iterator iter = g_tsList.find(uiServerInst_);
+			std::map<unsigned long long, ts::tcp_server_t *>::iterator iter = g_tsList.find(ulServerInst_);
 			if (iter != g_tsList.end()) {
 				ts::tcp_server_t * pTcpSrv = iter->second;
 				if (pTcpSrv) {
@@ -70,13 +70,13 @@ int __stdcall TS_StopServer(unsigned int uiServerInst_)
 	return result;
 }
 
-int __stdcall TS_SetLogType(unsigned int uiServerInst_, int nLogType_)
+int __stdcall TS_SetLogType(unsigned long long ulServerInst_, int nLogType_)
 {
 	int result = -1;
-	if (uiServerInst_ > 0) {
+	if (ulServerInst_ > 0) {
 		std::lock_guard<std::mutex> lock(g_mutex4TsList);
 		if (!g_tsList.empty()) {
-			std::map<unsigned int, ts::tcp_server_t *>::iterator iter = g_tsList.find(uiServerInst_);
+			std::map<unsigned long long, ts::tcp_server_t *>::iterator iter = g_tsList.find(ulServerInst_);
 			if (iter != g_tsList.end()) {
 				ts::tcp_server_t * pTcpSrv = iter->second;
 				if (pTcpSrv) {
@@ -88,13 +88,14 @@ int __stdcall TS_SetLogType(unsigned int uiServerInst_, int nLogType_)
 	return result;
 }
 
-int __stdcall TS_SendData(unsigned int uiServerInst_, const char * pEndpoint_, const char * pData_, unsigned int uiDataLen_)
+int __stdcall TS_SendData(unsigned long long ulServerInst_, const char * pEndpoint_, const char * pData_, 
+	unsigned int uiDataLen_)
 {
 	int result = -1;
-	if (uiServerInst_ > 0) {
+	if (ulServerInst_ > 0) {
 		std::lock_guard<std::mutex> lock(g_mutex4TsList);
 		if (!g_tsList.empty()) {
-			std::map<unsigned int, ts::tcp_server_t *>::iterator iter = g_tsList.find(uiServerInst_);
+			std::map<unsigned long long, ts::tcp_server_t *>::iterator iter = g_tsList.find(ulServerInst_);
 			if (iter != g_tsList.end()) {
 				ts::tcp_server_t * pTcpSrv = iter->second;
 				if (pTcpSrv) {
@@ -108,13 +109,13 @@ int __stdcall TS_SendData(unsigned int uiServerInst_, const char * pEndpoint_, c
 	return result;
 }
 
-int __stdcall TS_GetPort(unsigned int uiServerInst_, unsigned int & uiPort_)
+int __stdcall TS_GetPort(unsigned long long ulServerInst_, unsigned int & uiPort_)
 {
 	int result = -1;
-	if (uiServerInst_ > 0) {
+	if (ulServerInst_ > 0) {
 		std::lock_guard<std::mutex> lock(g_mutex4TsList);
 		if (!g_tsList.empty()) {
-			std::map<unsigned int, ts::tcp_server_t *>::iterator iter = g_tsList.find(uiServerInst_);
+			std::map<unsigned long long, ts::tcp_server_t *>::iterator iter = g_tsList.find(ulServerInst_);
 			if (iter != g_tsList.end()) {
 				ts::tcp_server_t * pTcpSrv = iter->second;
 				if (pTcpSrv) {
@@ -128,13 +129,13 @@ int __stdcall TS_GetPort(unsigned int uiServerInst_, unsigned int & uiPort_)
 	return result;
 }
 
-int __stdcall TS_SetMessageCallback(unsigned int uiServerInst_, fMessageCallback fMsgCb_, void * pUserData_)
+int __stdcall TS_SetMessageCallback(unsigned long long ulServerInst_, fMessageCallback fMsgCb_, void * pUserData_)
 {
 	int result = -1;
-	if (uiServerInst_ > 0) {
+	if (ulServerInst_ > 0) {
 		std::lock_guard<std::mutex> lock(g_mutex4TsList);
 		if (!g_tsList.empty()) {
-			std::map<unsigned int, ts::tcp_server_t *>::iterator iter = g_tsList.find(uiServerInst_);
+			std::map<unsigned long long, ts::tcp_server_t *>::iterator iter = g_tsList.find(ulServerInst_);
 			if (iter != g_tsList.end()) {
 				ts::tcp_server_t * pTcpSrv = iter->second;
 				if (pTcpSrv) {
@@ -147,13 +148,13 @@ int __stdcall TS_SetMessageCallback(unsigned int uiServerInst_, fMessageCallback
 	return result;
 }
 
-int __stdcall TS_CloseEndpoint(unsigned int uiServerInst_, const char * pEndpoint_)
+int __stdcall TS_CloseEndpoint(unsigned long long ulServerInst_, const char * pEndpoint_)
 {
 	int result = -1;
-	if (uiServerInst_ > 0) {
+	if (ulServerInst_ > 0) {
 		std::lock_guard<std::mutex> lock(g_mutex4TsList);
 		if (!g_tsList.empty()) {
-			std::map<unsigned int, ts::tcp_server_t *>::iterator iter = g_tsList.find(uiServerInst_);
+			std::map<unsigned long long, ts::tcp_server_t *>::iterator iter = g_tsList.find(ulServerInst_);
 			if (iter != g_tsList.end()) {
 				ts::tcp_server_t * pTcpSrv = iter->second;
 				if (pTcpSrv) {

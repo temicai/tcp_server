@@ -27,10 +27,10 @@ enum eErrorCode {
 
 typedef struct tagMessageContent
 {
-	char szEndPoint[32];				//消息来源
-	unsigned char * pMsgData;		//消息体
-	unsigned long ulMsgDataLen;	//消息长度
-	unsigned long ulMsgTime;		//消息时间,精确到秒
+	char szEndPoint[32];
+	unsigned char * pMsgData;
+	unsigned long ulMsgDataLen;
+	unsigned long ulMsgTime;
 	tagMessageContent()
 	{
 		szEndPoint[0] = '\0';

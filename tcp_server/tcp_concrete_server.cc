@@ -46,6 +46,7 @@ int ts::tcp_server_t::Start(unsigned short usPort_, fMessageCallback fMsgCb_, vo
 	pEndpoint->nPort = usPort_;
 	pEndpoint->ulTime = (unsigned long)time(NULL);
 	pEndpoint->nType = 0;
+	pEndpoint->nTransferData = 0;
 	sprintf_s(pEndpoint->szIp, sizeof(pEndpoint->szIp), "*");
 	if (!addEndpoint(pEndpoint)) {
 		delete pEndpoint;
@@ -91,6 +92,9 @@ void ts::tcp_server_t::SetWaitDataTimeout(int nTimeout_)
 {
 	if (nTimeout_ <= 30) {
 		m_nTimeout = 30;
+	}
+	else {
+		m_nTimeout = nTimeout_;
 	}
 }
 
@@ -215,6 +219,7 @@ void ts::recv(void * param_)
 										Endpoint * pNewEndpoint = new Endpoint();
 										pNewEndpoint->fd = accFd;
 										pNewEndpoint->nType = 1;
+										pNewEndpoint->nTransferData = 0;
 										pNewEndpoint->ulTime = (unsigned long)time(NULL);
 										inet_ntop(AF_INET, (IN_ADDR *)&clientAddress.sin_addr, pNewEndpoint->szIp, sizeof(pNewEndpoint->szIp));
 										pNewEndpoint->nPort = ntohs(clientAddress.sin_port);
@@ -250,6 +255,7 @@ void ts::recv(void * param_)
 									else if (nRecvLen > 0) {
 										//printf("recv from %s, %d data %s\n", pServer->m_endpoints[i]->toString().c_str(), nRecvLen, szRecvBuf);
 										pServer->m_endpoints[i]->ulTime = (unsigned long)time(NULL);
+										pServer->m_endpoints[i]->nTransferData = 1;
 										if (pServer->m_msgCb) {
 											MessageContent msgContent;
 											strcpy_s(msgContent.szEndPoint, sizeof(msgContent.szEndPoint), 
@@ -287,8 +293,24 @@ void ts::supervise(void * param_)
 					ts::Endpoint * pEndpoint = *iter;
 					if (pEndpoint) {
 						if (pEndpoint->nType == 1) {
+							if (pEndpoint->nTransferData == 0) {
+								int nSeconds = 0;
+								int nLen = sizeof(nSeconds);
+								getsockopt(pEndpoint->fd, SOL_SOCKET, SO_CONNECT_TIME, (char *)&nSeconds, &nLen);
+								if (nSeconds != -1 && nSeconds > 30) {
+									printf("link=%s, sock=%d, connect time=%d, linger no data\n", pEndpoint->toString().c_str(),
+										(int)pEndpoint->fd, nSeconds);
+									closesocket(pEndpoint->fd);
+									if (pServer->m_msgCb) {
+										pServer->m_msgCb(MSG_LINK_DISCONNECT, (void *)pEndpoint->toString().c_str(), pServer->m_pUserData);
+									}
+									delete pEndpoint;
+									iter = pServer->m_endpoints.erase(iter);
+									continue;
+								}
+							}
 							if (send(pEndpoint->fd, NULL, 0, 0) == SOCKET_ERROR) {
-								//printf("connection %s disconnect for error=%d\n", pEndpoint->toString().c_str(), WSAGetLastError());
+								printf("connection %s disconnect for error=%d\n", pEndpoint->toString().c_str(), WSAGetLastError());
 								closesocket(pEndpoint->fd);
 								if (pServer->m_msgCb) {
 									pServer->m_msgCb(MSG_LINK_DISCONNECT, (void *)pEndpoint->toString().c_str(), pServer->m_pUserData);
@@ -300,7 +322,7 @@ void ts::supervise(void * param_)
 							else {
 								unsigned long ulNow = (unsigned long)time(NULL);
 								if (ulNow > pEndpoint->ulTime && (int)(ulNow - pEndpoint->ulTime) > pServer->m_nTimeout + 10) {
-									//printf("connection %s disconnect for timeout\n", pEndpoint->toString().c_str());
+									printf("connection %s disconnect for timeout\n", pEndpoint->toString().c_str());
 									closesocket(pEndpoint->fd);
 									if (pServer->m_msgCb) {
 										pServer->m_msgCb(MSG_LINK_DISCONNECT, (void *)pEndpoint->toString().c_str(), pServer->m_pUserData);

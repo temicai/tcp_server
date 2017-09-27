@@ -3,6 +3,7 @@
 
 #include <WinSock2.h>
 #include <WS2tcpip.h>
+#include <MSWSock.h>
 #include <thread>
 #include <string>
 #include <time.h>
@@ -14,7 +15,6 @@
 
 #pragma comment(lib, "ws2_32.lib")
 
-
 namespace ts
 {
 
@@ -25,7 +25,8 @@ namespace ts
 		fd_t fd;
 		char szIp[20];
 		int nPort;
-		int nType;
+		int nType : 16;
+		int nTransferData : 16;
 		unsigned long ulTime;
 		std::string toString()
 		{
@@ -40,6 +41,7 @@ namespace ts
 			nPort = 0;
 			ulTime = 0;
 			nType = 0;
+			nTransferData = 0;
 		}
 	} Endpoint;
 
