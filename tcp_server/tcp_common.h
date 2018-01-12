@@ -18,24 +18,19 @@ enum eErrorCode {
 	E_SERVICE_ALLOCATE_INSTANCE_ERROR = 7,
 	E_INVALID_SERVICE_HANDLE = 8,
 	E_SERVICE_NOT_RUNNING = 9,
-
-
-
 };
-
-
 
 typedef struct tagMessageContent
 {
 	char szEndPoint[32];
 	unsigned char * pMsgData;
-	unsigned long ulMsgDataLen;
-	unsigned long ulMsgTime;
+	unsigned int uiMsgDataLen;
+	unsigned long long ulMsgTime;
 	tagMessageContent()
 	{
 		szEndPoint[0] = '\0';
 		pMsgData = 0;
-		ulMsgDataLen = 0;
+		uiMsgDataLen = 0;
 		ulMsgTime = 0;
 	}
 } MessageContent;

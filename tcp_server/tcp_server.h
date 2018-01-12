@@ -8,8 +8,7 @@
 
 extern "C"
 {
-	unsigned long long __stdcall TS_StartServer(unsigned int uiPort, int nLogType, fMessageCallback fMsgCb,
-		void * pUserData, int nIdleTime);
+	unsigned long long __stdcall TS_StartServer(unsigned int uiPort, fMessageCallback fMsgCb, void * pUserData, int nIdleTime);
 	int __stdcall TS_StopServer(unsigned long long ullServerInst);
 	int __stdcall TS_SetLogType(unsigned long long ullServerInst, int nLogType);
 	int __stdcall TS_SendData(unsigned long long ullServerInst, const char * pEndpoint, const char * pData, unsigned int uiDataLen);

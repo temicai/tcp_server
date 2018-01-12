@@ -6,11 +6,20 @@
 
 std::map<unsigned long long, ts::tcp_server_t *> g_tsList;
 std::mutex g_mutex4TsList;
+char g_szDllPath[256];
 
 BOOL APIENTRY DllMain(void * hInst_, DWORD dwReason_, void * pReserved_)
 {
 	if (dwReason_ == DLL_PROCESS_ATTACH) {
 		g_tsList.clear();
+		g_szDllPath[0] = '\0';
+		char szPath[256] = { 0 };
+		if (GetModuleFileNameA((HMODULE)hInst_, szPath, sizeof(szPath)) != 0) {
+			char szDrive[32] = { 0 };
+			char szDir[256] = { 0 };
+			_splitpath_s(szPath, szDrive, sizeof(szDrive), szDir, sizeof(szDir), nullptr, 0, nullptr, 0);
+			sprintf_s(g_szDllPath, sizeof(g_szDllPath), "%s%s", szDrive, szDir);
+		}
 	}
 	else if (dwReason_ == DLL_PROCESS_DETACH) {
 		if (!g_tsList.empty()) {
@@ -28,14 +37,14 @@ BOOL APIENTRY DllMain(void * hInst_, DWORD dwReason_, void * pReserved_)
 	return TRUE;
 }
 
-unsigned long long __stdcall TS_StartServer(unsigned int uiPort_, int nLogType_, fMessageCallback fMsgCb_,
+unsigned long long __stdcall TS_StartServer(unsigned int uiPort_, fMessageCallback fMsgCb_,
 	void * pUserData_, int nIdleTime_)
 {
 	unsigned long long result = 0;
 	{
 		std::lock_guard<std::mutex> lock(g_mutex4TsList);
 		if (g_tsList.size() < MAX_PARALLEL_INSTANCE_NUM) {
-			ts::tcp_server_t * pTcpSrv = new ts::tcp_server_t();
+			ts::tcp_server_t * pTcpSrv = new ts::tcp_server_t(g_szDllPath);
 			if (pTcpSrv->Start((unsigned short)uiPort_, fMsgCb_, pUserData_) != -1) {
 				pTcpSrv->SetWaitDataTimeout(nIdleTime_);
 				unsigned long long ullKey = (unsigned long long)pTcpSrv;
@@ -63,7 +72,10 @@ int __stdcall TS_StopServer(unsigned long long ulServerInst_)
 				if (pTcpSrv) {
 					pTcpSrv->Stop();
 					result = 0;
+					delete pTcpSrv;
+					pTcpSrv = nullptr;
 				}
+				g_tsList.erase(iter);
 			}
 		}
 	}

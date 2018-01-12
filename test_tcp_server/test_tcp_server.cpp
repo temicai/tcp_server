@@ -59,8 +59,8 @@ void __stdcall msgCb(int nMsgType, void * pMsgData, void * pUserData_)
 	else if (nMsgType == MSG_DATA) {
 		MessageContent * pMsgContent = (MessageContent *)pMsgData;
 		if (pMsgContent) {
-			printf("recv from %s, %d data\n", pMsgContent->szEndPoint, pMsgContent->ulMsgDataLen);
-			size_t nLen = pMsgContent->ulMsgDataLen;
+			printf("recv from %s, %d data\n", pMsgContent->szEndPoint, pMsgContent->uiMsgDataLen);
+			size_t nLen = pMsgContent->uiMsgDataLen;
 			char * pData = new char[nLen + 1];
 			memcpy_s(pData, nLen + 1, pMsgContent->pMsgData, nLen);
 			pData[nLen] = '\0';
@@ -98,7 +98,7 @@ int main(int argc, char ** argv)
 	if (argc > 1) {
 		usPort = (unsigned short)atoi(argv[1]);
 	}
-	unsigned long long ullSrvInst = TS_StartServer(usPort, 0, msgCb, NULL, 30);
+	unsigned long long ullSrvInst = TS_StartServer(usPort, msgCb, NULL, 30);
 	if (ullSrvInst > 0) {
 		gRun = true;
 		printf("working %hu\n", usPort);
@@ -121,11 +121,13 @@ int main(int argc, char ** argv)
 							strLink = *iter;
 						}
 					}
-					char szMsg[64] = { 0 };
-					sprintf_s(szMsg, sizeof(szMsg), "hello, %s", strLink.c_str());
-					int nVal = TS_SendData(ullSrvInst, strLink.c_str(), szMsg, (unsigned int)strlen(szMsg));
-					if (nVal == -1) {
-						TS_CloseEndpoint(ullSrvInst, strLink.c_str());
+					if (!strLink.empty()) {
+						char szMsg[64] = { 0 };
+						sprintf_s(szMsg, sizeof(szMsg), "hello, %s", strLink.c_str());
+						int nVal = TS_SendData(ullSrvInst, strLink.c_str(), szMsg, (unsigned int)strlen(szMsg));
+						if (nVal == -1) {
+							TS_CloseEndpoint(ullSrvInst, strLink.c_str());
+						}
 					}
 				}
 			}
@@ -133,10 +135,14 @@ int main(int argc, char ** argv)
 				std::string strLink;
 				{
 					std::lock_guard<std::mutex> lock(gMutex4LinkList);
-					std::set<std::string>::iterator iter = gLinkList.begin();
-					strLink = *iter;
+					if (!gLinkList.empty()) {
+						std::set<std::string>::iterator iter = gLinkList.begin();
+						strLink = *iter;
+					}
 				}
-				TS_CloseEndpoint(ullSrvInst, strLink.c_str());
+				if (!strLink.empty()) {
+					TS_CloseEndpoint(ullSrvInst, strLink.c_str());
+				}
 			}
 		}
 		TS_StopServer(ullSrvInst);
