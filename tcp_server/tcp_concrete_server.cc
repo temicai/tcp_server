@@ -10,6 +10,7 @@ ts::tcp_server_t::tcp_server_t(char * pPath_)
 	m_msgCb = NULL;
 	m_pUserData = NULL;
 	m_usPort = 0;
+	m_sockList.reserve(1024 * sizeof(ts::SocketInfo));
 	m_ullInst = 0;
 	m_ullInst = LOG_Init();
 	if (m_ullInst) {
@@ -115,6 +116,7 @@ void ts::tcp_server_t::Stop()
 				if (pEndpoint->fd != -1) {
 					shutdown(pEndpoint->fd, SD_BOTH);
 					closesocket(pEndpoint->fd);
+					pEndpoint->fd = -1;
 				}
 				delete pEndpoint;
 				pEndpoint = NULL;
@@ -166,6 +168,7 @@ int ts::tcp_server_t::SendData(const char * pLinkId_, const char * pData_, unsig
 						if (pEndpoint->fd != -1) {
 							shutdown(pEndpoint->fd, SD_BOTH);
 							closesocket(pEndpoint->fd);
+							pEndpoint->fd = -1;
 						}
 						delete pEndpoint;
 						pEndpoint = NULL;
@@ -283,7 +286,7 @@ void ts::tcp_server_t::dispatch()
 							memcpy_s(sockData.pData, sockData.uiDataLen + 1, pEvent->pEventData + nSockDataLen, sockData.uiDataLen);
 							sockData.pData[sockData.uiDataLen] = '\0';
 						}
-						if (sockData.sock > 0) {
+						if (sockData.sock != -1) {
 							std::lock_guard<std::mutex> lk(m_mutex4Endpoints);
 							std::vector<ts::Endpoint *>::iterator iter = m_endpoints.begin();
 							while (iter != m_endpoints.end()) {
@@ -296,8 +299,7 @@ void ts::tcp_server_t::dispatch()
 
 									char szLog[256] = { 0 };
 									sprintf_s(szLog, sizeof(szLog), "[tcp_server]%s[%d]link=%s, sock=%d, recv %u data\n",
-										__FUNCTION__, __LINE__, pEndpoint->toString().c_str(), (int)pEndpoint->fd, 
-										sockData.uiDataLen);
+										__FUNCTION__, __LINE__, pEndpoint->toString().c_str(), (int)pEndpoint->fd, sockData.uiDataLen);
 									LOG_Log(m_ullInst, szLog, pf_logger::eLOGCATEGORY_INFO, pf_logger::eLOGTYPE_FILE);
 
 									if (m_msgCb) {
@@ -315,20 +317,16 @@ void ts::tcp_server_t::dispatch()
 										pMsgContent->pMsgData = NULL;
 										delete pMsgContent;
 										pMsgContent = NULL;
-
 									}
 									break;
 								}
 								iter++;
 							}
 						}
-
 						if (sockData.uiDataLen > 0 && sockData.pData) {
 							delete[] sockData.pData;
 							sockData.pData = NULL;
 						}
-
-
 						break;
 					}
 					case ts::EVENT_DELETE: {
@@ -336,7 +334,7 @@ void ts::tcp_server_t::dispatch()
 							ts::SocketInfo sockInfo;
 							memcpy_s(&sockInfo, sizeof(ts::SocketInfo), pEvent->pEventData, pEvent->nDataLen);
 
-							if (sockInfo.sock > 0) {
+							if (sockInfo.sock != -1) {
 								std::lock_guard<std::mutex> lk(m_mutex4Endpoints);
 								std::vector<ts::Endpoint *>::iterator iter = m_endpoints.begin();
 								while (iter != m_endpoints.end()) {
@@ -457,7 +455,7 @@ void ts::recv(void * param_)
 										if (pServer->m_msgCb) {
 											pServer->m_msgCb(MSG_LINK_CONNECT, (void *)pNewEndpoint->toString().c_str(), pServer->m_pUserData);
 										}
-										sprintf_s(szLog, sizeof(szLog), "[tcp_server]link=%s connect, fd=%d\n", 
+										sprintf_s(szLog, sizeof(szLog), "[tcp_server]link=%s connect, sock=%d\n", 
 											pNewEndpoint->toString().c_str(), (int)pNewEndpoint->fd);
 										LOG_Log(pServer->m_ullInst, szLog, pf_logger::eLOGCATEGORY_INFO, pf_logger::eLOGTYPE_FILE);
 									}
@@ -479,6 +477,7 @@ void ts::recv(void * param_)
 
 										shutdown(pServer->m_endpoints[i]->fd, SD_BOTH);
 										closesocket(pServer->m_endpoints[i]->fd);
+										pServer->m_endpoints[i]->fd = -1;
 
 										pServer->m_endpoints.erase(pServer->m_endpoints.begin() + i);
 									}
@@ -495,6 +494,7 @@ void ts::recv(void * param_)
 										}
 										shutdown(pServer->m_endpoints[i]->fd, SD_BOTH);
 										closesocket(pServer->m_endpoints[i]->fd);
+										pServer->m_endpoints[i]->fd = -1;
 
 										pServer->m_endpoints.erase(pServer->m_endpoints.begin() + i);
 										continue;
@@ -549,7 +549,9 @@ void ts::recv2(void * param_)
 				std::lock_guard<std::mutex> lock(pServer->m_mutex4SockList);
 				FD_ZERO(&fdRead);
 				for (size_t i = 0; i < pServer->m_sockList.size(); i++) {
-					FD_SET(pServer->m_sockList[i]->sock, &fdRead);
+					if (pServer->m_sockList[i]->sock != -1) {
+						FD_SET(pServer->m_sockList[i]->sock, &fdRead);
+					}
 				}
 				int n = select(0, &fdRead, nullptr, nullptr, &timeout);
 				if (n == 0) {
@@ -560,21 +562,33 @@ void ts::recv2(void * param_)
 					sprintf_s(szLog, sizeof(szLog), "[tcp_server]%s[%d]select error=%d\n", __FUNCTION__, __LINE__,
 						WSAGetLastError());
 					LOG_Log(pServer->m_ullInst, szLog, pf_logger::eLOGCATEGORY_INFO, pf_logger::eLOGTYPE_FILE);
+					std::this_thread::sleep_for(std::chrono::milliseconds(100));
 					continue;
 				}
 				else if (n > 0) {
-					for (size_t i = 0; i < pServer->m_sockList.size(); i++) {
-						if (FD_ISSET(pServer->m_sockList[i]->sock, &fdRead)) {
-							if (pServer->m_sockList[i]->nSockType == 0) { //listener
+
+					std::vector<ts::SocketInfo *>::iterator iter = pServer->m_sockList.begin();
+					while (iter != pServer->m_sockList.end()) {
+						ts::SocketInfo * pSockInfo = *iter;
+						if (FD_ISSET(pSockInfo->sock, &fdRead)) {
+							if (pSockInfo->nSockType == 0) { //listener
 								sockaddr_in clientAddress;
 								memset(&clientAddress, 0, sizeof(sockaddr_in));
 								int nAddressLen = sizeof(sockaddr_in);
-								SOCKET sock = accept(pServer->m_sockList[i]->sock, (sockaddr *)&clientAddress, &nAddressLen);
+								SOCKET sock = accept(pSockInfo->sock, (sockaddr *)&clientAddress, &nAddressLen);
 								if (sock != -1) {
-									ts::SocketInfo * pSockInfo = new ts::SocketInfo();
-									pSockInfo->nSockType = 1;
-									pSockInfo->sock = sock;
-									pServer->m_sockList.emplace_back(pSockInfo);
+									int nKeepAlive = 1;
+									setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, (const char *)&nKeepAlive, (int)sizeof(int));
+									int nKeepAliveTime = 180; //3min
+									setsockopt(sock, IPPROTO_TCP, TCP_KEEPIDLE, (const char *)&nKeepAliveTime, (int)sizeof(int));
+									int nKeepAliveIntvl = 10;
+									setsockopt(sock, IPPROTO_TCP, TCP_KEEPINTVL, (const char *)&nKeepAliveIntvl, (int)sizeof(int));
+									int nKeepAliveProbes = 3;
+									setsockopt(sock, IPPROTO_TCP, TCP_KEEPCNT, (const char *)&nKeepAliveProbes, (int)sizeof(int));
+									ts::SocketInfo * pNewSockInfo = new ts::SocketInfo();
+									pNewSockInfo->nSockType = 1;
+									pNewSockInfo->sock = sock;
+									pServer->m_sockList.emplace_back(pNewSockInfo);
 
 									ts::Endpoint * pEndpoint = new ts::Endpoint();
 									pEndpoint->fd = sock;
@@ -588,89 +602,83 @@ void ts::recv2(void * param_)
 									if (pServer->m_msgCb) {
 										pServer->m_msgCb(MSG_LINK_CONNECT, (void *)pEndpoint->toString().c_str(), pServer->m_pUserData);
 									}
-									sprintf_s(szLog, sizeof(szLog), "[tcp_server]%s[%d]link=%s connect\n", __FUNCTION__, __LINE__,
-										pEndpoint->toString().c_str());
-									if (pServer->m_ullInst) {
-										LOG_Log(pServer->m_ullInst, szLog, pf_logger::eLOGCATEGORY_INFO, pf_logger::eLOGTYPE_FILE);
-									}
+									sprintf_s(szLog, sizeof(szLog), "[tcp_server]%s[%d]sock=%d, link=%s connect\n", __FUNCTION__, __LINE__,
+										(int)sock, pEndpoint->toString().c_str());
+									LOG_Log(pServer->m_ullInst, szLog, pf_logger::eLOGCATEGORY_INFO, pf_logger::eLOGTYPE_FILE);
+
 								}
 							}
 							else { //client
 								char szRecvBuf[512 * 1024] = { 0 };
-								int nRecvLen = ::recv(pServer->m_sockList[i]->sock, szRecvBuf, 512 * 1024, 0);
+								int nRecvLen = ::recv(pSockInfo->sock, szRecvBuf, 512 * 1024, 0);
 								if (nRecvLen == -1) {
+									iter = pServer->m_sockList.erase(iter);
 									sprintf_s(szLog, sizeof(szLog), "[tcp_server]%s[%d]sock=%d, recv error=%d\n", __FUNCTION__,
-										__LINE__, (int)pServer->m_sockList[i]->sock, WSAGetLastError());
+										__LINE__, (int)pSockInfo->sock, WSAGetLastError());
 									LOG_Log(pServer->m_ullInst, szLog, pf_logger::eLOGCATEGORY_INFO, pf_logger::eLOGTYPE_FILE);
-									
-									shutdown(pServer->m_sockList[i]->sock, SD_BOTH);
-									closesocket(pServer->m_sockList[i]->sock);
-
-									ts::SocketInfo * pSockInfo = pServer->m_sockList[i];
-									if (pSockInfo) {
-										ts::Event * pEvent = new ts::Event();
-										pEvent->nEventType = ts::EVENT_DELETE;
-										pEvent->nDataLen = (uint32_t)sizeof(ts::SocketInfo);
-										pEvent->pEventData = new unsigned char[pEvent->nDataLen + 1];
-										memcpy_s(pEvent->pEventData, pEvent->nDataLen + 1, pSockInfo, pEvent->nDataLen);
-										pEvent->pEventData[pEvent->nDataLen] = '\0';
-										if (!pServer->addEvent(pEvent)) {
-											if (pEvent) {
-												if (pEvent->nDataLen > 0 && pEvent->pEventData) {
-													delete[] pEvent->pEventData;
-													pEvent->pEventData = NULL;
-													pEvent->nDataLen = 0;
-												}
-												delete pEvent;
-												pEvent = NULL;
+									shutdown(pSockInfo->sock, SD_BOTH);
+									ts::Event * pEvent = new ts::Event();
+									pEvent->nEventType = ts::EVENT_DELETE;
+									pEvent->nDataLen = (uint32_t)sizeof(ts::SocketInfo);
+									pEvent->pEventData = new unsigned char[pEvent->nDataLen + 1];
+									memcpy_s(pEvent->pEventData, pEvent->nDataLen + 1, pSockInfo, pEvent->nDataLen);
+									pEvent->pEventData[pEvent->nDataLen] = '\0';
+									if (!pServer->addEvent(pEvent)) {
+										if (pEvent) {
+											if (pEvent->nDataLen > 0 && pEvent->pEventData) {
+												delete[] pEvent->pEventData;
+												pEvent->pEventData = NULL;
+												pEvent->nDataLen = 0;
 											}
+											delete pEvent;
+											pEvent = NULL;
 										}
-										delete pSockInfo;
-										pSockInfo = NULL;
 									}
-									pServer->m_sockList.erase(pServer->m_sockList.begin() + i);
+									closesocket(pSockInfo->sock);
+									pSockInfo->sock = -1;
+									delete pSockInfo;
+									pSockInfo = NULL;
 									continue;
 								}
 								else if (nRecvLen == 0) {
+									iter = pServer->m_sockList.erase(iter);
 									sprintf_s(szLog, sizeof(szLog), "[tcp_server]%s[%d]sock=%d, recv timeout\n", __FUNCTION__,
-										__LINE__, (int)pServer->m_sockList[i]->sock);
+										__LINE__, (int)pSockInfo->sock);
 									LOG_Log(pServer->m_ullInst, szLog, pf_logger::eLOGCATEGORY_INFO, pf_logger::eLOGTYPE_FILE);
 									
-									shutdown(pServer->m_sockList[i]->sock, SD_BOTH);
-									closesocket(pServer->m_sockList[i]->sock);
+									shutdown(pSockInfo->sock, SD_BOTH);
 
-									ts::SocketInfo * pSockInfo = pServer->m_sockList[i];
-									if (pSockInfo) {
-										ts::Event * pEvent = new ts::Event();
-										pEvent->nEventType = ts::EVENT_DELETE;
-										pEvent->nDataLen = (uint32_t)sizeof(ts::SocketInfo);
-										pEvent->pEventData = new unsigned char[pEvent->nDataLen + 1];
-										memcpy_s(pEvent->pEventData, pEvent->nDataLen + 1, pSockInfo, pEvent->nDataLen);
-										pEvent->pEventData[pEvent->nDataLen] = '\0';
-										if (!pServer->addEvent(pEvent)) {
-											if (pEvent) {
-												if (pEvent->nDataLen > 0 && pEvent->pEventData) {
-													delete[] pEvent->pEventData;
-													pEvent->pEventData = NULL;
-													pEvent->nDataLen = 0;
-												}
-												delete pEvent;
-												pEvent = NULL;
+									ts::Event * pEvent = new ts::Event();
+									pEvent->nEventType = ts::EVENT_DELETE;
+									pEvent->nDataLen = (uint32_t)sizeof(ts::SocketInfo);
+									pEvent->pEventData = new unsigned char[pEvent->nDataLen + 1];
+									memcpy_s(pEvent->pEventData, pEvent->nDataLen + 1, pSockInfo, pEvent->nDataLen);
+									pEvent->pEventData[pEvent->nDataLen] = '\0';
+									if (!pServer->addEvent(pEvent)) {
+										if (pEvent) {
+											if (pEvent->nDataLen > 0 && pEvent->pEventData) {
+												delete[] pEvent->pEventData;
+												pEvent->pEventData = NULL;
+												pEvent->nDataLen = 0;
 											}
+											delete pEvent;
+											pEvent = NULL;
 										}
-										delete pSockInfo;
-										pSockInfo = NULL;
 									}
-									pServer->m_sockList.erase(pServer->m_sockList.begin() + i);
+									closesocket(pSockInfo->sock);
+									pSockInfo->sock = -1;
+									delete pSockInfo;
+									pSockInfo = NULL;
+									
 									continue;
 								}
 								else if (nRecvLen > 0) {
 									sprintf_s(szLog, sizeof(szLog), "[tcp_server]%s[%d]sock=%d, recv %d data\n", __FUNCTION__,
-										__LINE__, (int)pServer->m_sockList[i]->sock, nRecvLen);
+										__LINE__, (int)pSockInfo->sock, nRecvLen);
 									LOG_Log(pServer->m_ullInst, szLog, pf_logger::eLOGCATEGORY_INFO, pf_logger::eLOGTYPE_FILE);
 
 									ts::SocketData * pSockData = new ts::SocketData();
-									pSockData->sock = pServer->m_sockList[i]->sock;
+									pSockData->sock = pSockInfo->sock;
 									pSockData->uiDataLen = nRecvLen;
 									pSockData->pData = new char[nRecvLen + 1];
 									memcpy_s(pSockData->pData, nRecvLen + 1, szRecvBuf, nRecvLen);
@@ -698,20 +706,22 @@ void ts::recv2(void * param_)
 										}
 									}
 
-									if (pSockData->pData) {
-										delete[] pSockData->pData;
-										pSockData->pData = NULL;
+									if (pSockData) {
+										if (pSockData->pData) {
+											delete[] pSockData->pData;
+											pSockData->pData = NULL;
+										}
+										delete pSockData;
+										pSockData = NULL;
 									}
-									delete pSockData;
-									pSockData = NULL;
 								}
 							}
 						}
+						iter++;
 					}
 				}
 			}
-
-			std::this_thread::sleep_for(std::chrono::milliseconds(500));
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
 		}
 	}
 }
@@ -730,14 +740,12 @@ void ts::supervise(void * param_)
 					ts::Endpoint * pEndpoint = *iter;
 					if (pEndpoint) {
 						if (pEndpoint->nType == 1) {
-							sprintf_s(szLog, sizeof(szLog), "[tcp_server]%s[%d]begin check link=%s, sock=%d\n", 
-								__FUNCTION__, __LINE__, pEndpoint->toString().c_str(), (int)pEndpoint->fd);
-							LOG_Log(pServer->m_ullInst, szLog, pf_logger::eLOGCATEGORY_INFO, pf_logger::eLOGTYPE_FILE);
 							if (pEndpoint->nTransferData == 0) {
 								int nSeconds = 0;
 								int nLen = sizeof(nSeconds);
 								getsockopt(pEndpoint->fd, SOL_SOCKET, SO_CONNECT_TIME, (char *)&nSeconds, &nLen);
-								if (nSeconds != -1 && nSeconds > 30) {
+								if (nSeconds != -1 && nSeconds > 60) {
+									iter = pServer->m_endpoints.erase(iter);
 
 									ts::SocketInfo sockInfo;
 									sockInfo.sock = pEndpoint->fd;
@@ -759,24 +767,25 @@ void ts::supervise(void * param_)
 										}
 									}
 
-									sprintf_s(szLog, sizeof(szLog), "[tcp_server]%s[%d]link=%s, fd=%d, disconnect for linger\n",
+									sprintf_s(szLog, sizeof(szLog), "[tcp_server]%s[%d]link=%s, sock=%d, disconnect for linger\n",
 										__FUNCTION__, __LINE__, pEndpoint->toString().c_str(), (int)pEndpoint->fd);
 									if (pServer->m_ullInst) {
 										LOG_Log(pServer->m_ullInst, szLog, pf_logger::eLOGCATEGORY_INFO, pf_logger::eLOGTYPE_FILE);
 									}
 									shutdown(pEndpoint->fd, SD_BOTH);
 									closesocket(pEndpoint->fd);
+									pEndpoint->fd = -1;
 									if (pServer->m_msgCb) {
 										pServer->m_msgCb(MSG_LINK_DISCONNECT, (void *)pEndpoint->toString().c_str(), pServer->m_pUserData);
 									}
 									delete pEndpoint;
-									iter = pServer->m_endpoints.erase(iter);
-
+									pEndpoint = NULL;
+									
 									continue;
 								}
 							}
 							if (send(pEndpoint->fd, NULL, 0, 0) == SOCKET_ERROR) {
-
+								iter = pServer->m_endpoints.erase(iter);
 								ts::SocketInfo sockInfo;
 								sockInfo.sock = pEndpoint->fd;
 								sockInfo.nSockType = 1;
@@ -797,23 +806,25 @@ void ts::supervise(void * param_)
 									}
 								}
 
-								sprintf_s(szLog, sizeof(szLog), "[tcp_server]%s[%d]link=%s, fd=%d, disconnect for error=%d\n",
-									__FUNCTION__, __LINE__, pEndpoint->toString().c_str(), (int)pEndpoint->fd, WSAGetLastError());
-								if (pServer->m_ullInst) {
-									LOG_Log(pServer->m_ullInst, szLog, pf_logger::eLOGCATEGORY_INFO, pf_logger::eLOGTYPE_FILE);
-								}
 								shutdown(pEndpoint->fd, SD_BOTH);
 								closesocket(pEndpoint->fd);
+								pEndpoint->fd = -1;
 								if (pServer->m_msgCb) {
 									pServer->m_msgCb(MSG_LINK_DISCONNECT, (void *)pEndpoint->toString().c_str(), pServer->m_pUserData);
 								}
+
+								sprintf_s(szLog, sizeof(szLog), "[tcp_server]%s[%d]link=%s, sock=%d, disconnect for error=%d\n",
+									__FUNCTION__, __LINE__, pEndpoint->toString().c_str(), (int)pEndpoint->fd, WSAGetLastError());
+								LOG_Log(pServer->m_ullInst, szLog, pf_logger::eLOGCATEGORY_INFO, pf_logger::eLOGTYPE_FILE);
+
 								delete pEndpoint;
-								iter = pServer->m_endpoints.erase(iter);
+								pEndpoint = NULL;
 								continue;
 							}
 							else {
 								unsigned long long ulNow = (unsigned long long)time(NULL);
 								if (ulNow > pEndpoint->ulTime && (int)(ulNow - pEndpoint->ulTime) > pServer->m_nTimeout + 10) {
+									iter = pServer->m_endpoints.erase(iter);
 
 									ts::SocketInfo sockInfo;
 									sockInfo.sock = pEndpoint->fd;
@@ -835,26 +846,21 @@ void ts::supervise(void * param_)
 										}
 									}
 
-									sprintf_s(szLog, sizeof(szLog), "[tcp_server]%s[%d]link=%s, fd=%d, disconnect for timeout\n",
+									sprintf_s(szLog, sizeof(szLog), "[tcp_server]%s[%d]link=%s, sock=%d, disconnect for timeout\n",
 										__FUNCTION__, __LINE__, pEndpoint->toString().c_str(), (int)pEndpoint->fd);
-									if (pServer->m_ullInst) {
-										LOG_Log(pServer->m_ullInst, szLog, pf_logger::eLOGCATEGORY_INFO, pf_logger::eLOGTYPE_FILE);
-									}
+									LOG_Log(pServer->m_ullInst, szLog, pf_logger::eLOGCATEGORY_INFO, pf_logger::eLOGTYPE_FILE);
+									
 									shutdown(pEndpoint->fd, SD_BOTH);
 									closesocket(pEndpoint->fd);
+									pEndpoint->fd = -1;
 									if (pServer->m_msgCb) {
 										pServer->m_msgCb(MSG_LINK_DISCONNECT, (void *)pEndpoint->toString().c_str(), pServer->m_pUserData);
 									}
 									delete pEndpoint;
-									iter = pServer->m_endpoints.erase(iter);
+									pEndpoint = NULL;
+									
 									continue;
 								}
-							}
-							sprintf_s(szLog, sizeof(szLog), "[tcp_server]%s[%d]check link=%s, sock=%d, %u|%u\n", __FUNCTION__,
-								__LINE__, pEndpoint->toString().c_str(), (int)pEndpoint->fd, i++, 
-								(unsigned int)pServer->m_endpoints.size());
-							if (pServer->m_ullInst) {
-								LOG_Log(pServer->m_ullInst, szLog, pf_logger::eLOGCATEGORY_INFO, pf_logger::eLOGTYPE_FILE);
 							}
 						}
 					}

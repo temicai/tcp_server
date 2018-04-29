@@ -1,6 +1,9 @@
 #ifndef TCP_CONCRETE_SERVER__H_CEAB29558442414197F0F1328F59D844
 #define TCP_CONCRETE_SERVER__H_CEAB29558442414197F0F1328F59D844
 
+#undef FD_SETSIZE
+#define FD_SETSIZE 1024
+
 #include <WinSock2.h>
 #include <WS2tcpip.h>
 #include <MSWSock.h>
@@ -50,12 +53,23 @@ namespace ts
 		SOCKET sock;
 		char * pData;
 		unsigned int uiDataLen;
+		tagSocketData()
+		{
+			sock = -1;
+			pData = NULL;
+			uiDataLen = 0;
+		}
 	} SocketData;
 
 	typedef struct tagSocketInfo
 	{
 		SOCKET sock;
 		int nSockType;
+		tagSocketInfo()
+		{
+			sock = -1;
+			nSockType = -1;
+		}
 	} SocketInfo;
 
 	typedef struct tagEndpoint
