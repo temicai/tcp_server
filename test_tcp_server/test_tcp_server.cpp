@@ -98,7 +98,7 @@ int main(int argc, char ** argv)
 	if (argc > 1) {
 		usPort = (unsigned short)atoi(argv[1]);
 	}
-	unsigned long long ullSrvInst = TS_StartServer(usPort, msgCb, NULL, 30);
+	unsigned long long ullSrvInst = TS_StartServer(usPort, msgCb, NULL, 60);
 	if (ullSrvInst > 0) {
 		gRun = true;
 		printf("working %hu\n", usPort);

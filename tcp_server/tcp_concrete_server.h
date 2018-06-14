@@ -109,7 +109,6 @@ namespace ts
 		int SendData(const char * pLinkId, const char * pData, unsigned int uiDataLen);
 		unsigned short GetPort();
 		int CloseLink(const char * pLinkId);
-		friend void recv(void *);
 		friend void recv2(void *);
 		friend void supervise(void *);
 		friend void eventDispatch(void *);
