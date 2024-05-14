@@ -4,7 +4,8 @@
 ts::tcp_server_t::tcp_server_t(char * pPath_)
 {
 	WSADATA wsaData;
-	WSAStartup(MAKEWORD(2, 2), &wsaData);
+  if (WSAStartup(MAKEWORD(2, 2), &wsaData) == 0) {
+  }
 	m_bStop = true;
 	m_nTimeout = 30;
 	m_msgCb = NULL;
@@ -444,6 +445,8 @@ void ts::recv2(void * param_)
 		timeval timeout{ 1, 0 };
 		FD_SET fdRead;
 		char szLog[256] = { 0 };
+    char *pRecvBuf = new char[512 * 1024];
+		memset(pRecvBuf, 0, 512 * 1024);
 		while (!pServer->m_bStop) {
 			{
 				std::lock_guard<std::mutex> lock(pServer->m_mutex4SockList);
@@ -509,8 +512,9 @@ void ts::recv2(void * param_)
 								}
 							}
 							else { //client
-								char szRecvBuf[512 * 1024] = { 0 };
-								int nRecvLen = ::recv(pSockInfo->sock, szRecvBuf, 512 * 1024, 0);
+								//char szRecvBuf[512 * 1024] = { 0 };
+
+								int nRecvLen = ::recv(pSockInfo->sock, pRecvBuf, 512 * 1024, 0);
 								if (nRecvLen == -1) {
 									iter = pServer->m_sockList.erase(iter);
 									sprintf_s(szLog, sizeof(szLog), "[tcp_server]%s[%d]sock=%d, recv error=%d\n", __FUNCTION__,
@@ -581,7 +585,7 @@ void ts::recv2(void * param_)
 									pSockData->sock = pSockInfo->sock;
 									pSockData->uiDataLen = nRecvLen;
 									pSockData->pData = new char[nRecvLen + 1];
-									memcpy_s(pSockData->pData, nRecvLen + 1, szRecvBuf, nRecvLen);
+									memcpy_s(pSockData->pData, nRecvLen + 1, pRecvBuf, nRecvLen);
 									pSockData->pData[nRecvLen] = '\0';
 
 									ts::Event * pEvent = new ts::Event();
@@ -591,7 +595,7 @@ void ts::recv2(void * param_)
 									pEvent->nDataLen = nDataLen;
 									pEvent->pEventData = new unsigned char[nDataLen + 1];
 									memcpy_s(pEvent->pEventData, nDataLen + 1, pSockData, nSockDataLen);
-									memcpy_s(pEvent->pEventData + nSockDataLen, pSockData->uiDataLen + 1, szRecvBuf, nRecvLen);
+									memcpy_s(pEvent->pEventData + nSockDataLen, pSockData->uiDataLen + 1, pRecvBuf, nRecvLen);
 									pEvent->pEventData[nDataLen] = '\0';
 
 									if (!pServer->addEvent(pEvent)) {
@@ -623,7 +627,10 @@ void ts::recv2(void * param_)
 			}
 			std::this_thread::sleep_for(std::chrono::milliseconds(100));
 		}
-	}
+	
+		delete [] pRecvBuf;
+		pRecvBuf = nullptr;
+  }
 }
 
 void ts::supervise(void * param_)
